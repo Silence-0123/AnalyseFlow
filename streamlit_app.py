@@ -4,6 +4,7 @@ from __future__ import annotations
 import csv
 from io import BytesIO, StringIO
 
+import pandas as pd
 import streamlit as st
 from pypdf import PdfReader
 
@@ -82,7 +83,14 @@ if "transactions" in st.session_state:
         "日期": item["date"], "交易对手/摘要": item["name"], "金额": f"{'+' if item['dir'] == '入账' else '-'}¥{item['amount']:,.2f}",
         "方向": item["dir"], "经营关联": {"高": "强相关", "中": "可能相关", "低": "关联不足"}[item["tag"]], "判定依据": item["reason"],
     } for item in transactions]
-    st.dataframe(rows, use_container_width=True, hide_index=True, height=600)
+    table = pd.DataFrame(rows)
+
+    def highlight_strong_related(row):
+        if row["经营关联"] == "强相关":
+            return ["background-color: #fff0ee; color: #b42318; font-weight: 700"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(table.style.apply(highlight_strong_related, axis=1), use_container_width=True, hide_index=True, height=600)
 
     buffer = StringIO()
     writer = csv.DictWriter(buffer, fieldnames=rows[0].keys())
