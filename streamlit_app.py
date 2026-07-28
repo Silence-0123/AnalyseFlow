@@ -7,7 +7,7 @@ from io import BytesIO, StringIO
 import streamlit as st
 from pypdf import PdfReader
 
-from app import parse_transactions
+from app import extract_pdf_text, parse_transactions
 
 st.set_page_config(page_title="流水核验台", page_icon="📄", layout="wide")
 st.markdown("""
@@ -23,7 +23,7 @@ def parse_pdf(content: bytes, industry: str, business: str) -> tuple[list[dict],
     reader = PdfReader(BytesIO(content))
     if reader.is_encrypted:
         raise ValueError("该 PDF 已加密，请先导出无密码版本后再上传。")
-    text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+    text = extract_pdf_text(reader)
     if len(text.strip()) < 30:
         raise ValueError("未从 PDF 提取到足够文字。这通常是扫描件，请先使用 OCR 转成可搜索 PDF。")
     transactions = parse_transactions(text, industry, business)

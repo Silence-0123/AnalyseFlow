@@ -20,8 +20,13 @@ KEYWORDS = {
     "装修": ("建材|装饰|装修|五金|涂料|水泥|瓷砖|工程|施工", "娱乐城|棋牌|彩票|证券|股票"),
     "其他": ("租金|水费|电费|燃气|采购|货款|结算|收款", "娱乐城|棋牌|彩票|证券|股票"),
 }
-DATE = re.compile(r"(?:20\d{2}[/-]\d{1,2}[/-]\d{1,2}|20\d{2}年\d{1,2}月\d{1,2}日|20\d{6})")
-AMOUNT = re.compile(r"(?<![\d.])([+-]?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?|[+-]?\d+(?:\.\d{1,2})?)(?![\d.])")
+YEAR = r"(?:202[0-9]|203[0-5])"
+MONTH = r"(?:0[1-9]|1[0-2])"
+DAY = r"(?:0[1-9]|[12]\d|3[01])"
+# 严格限定合理日期，避免把交易单号中的 20812026、20262604 等数字片段当作日期。
+DATE = re.compile(rf"(?<!\d)(?:{YEAR}[/-]{MONTH}[/-]{DAY}|{YEAR}年\d{{1,2}}月\d{{1,2}}日|{YEAR}{MONTH}{DAY})(?!\d)")
+# 流水金额统一要求两位小数，交易单号、交易时间和手机号不会再被误认作金额。
+CURRENCY = re.compile(r"(?<![\d.])([+-]?\d{1,3}(?:,\d{3})*\.\d{2})(?![\d.])")
 
 
 def money(value: str) -> float | None:
@@ -38,6 +43,29 @@ def normalize_date(value: str) -> str:
     if re.fullmatch(r"20\d{6}", value):
         return f"{value[:4]}-{value[4:6]}-{value[6:]}"
     return value.replace("年", "-").replace("月", "-").replace("日", "")
+
+
+def extract_pdf_text(reader: PdfReader) -> str:
+    """按坐标重建表格行，避免 PDF 内部按列存储文字导致字段错位。"""
+    pages: list[str] = []
+    for page in reader.pages:
+        fragments: list[tuple[float, float, str]] = []
+
+        def capture(text, _cm, tm, _font, _size):
+            clean = " ".join(text.split())
+            if clean:
+                fragments.append((float(tm[5]), float(tm[4]), clean))
+
+        page.extract_text(visitor_text=capture)
+        fragments.sort(key=lambda item: (-item[0], item[1]))
+        rows: list[list[tuple[float, float, str]]] = []
+        for fragment in fragments:
+            if not rows or abs(rows[-1][0][0] - fragment[0]) > 2.5:
+                rows.append([fragment])
+            else:
+                rows[-1].append(fragment)
+        pages.append("\n".join(" ".join(cell[2] for cell in sorted(row, key=lambda item: item[1])) for row in rows))
+    return "\n".join(pages)
 
 
 def classify(text: str, direction: str, industry: str, description: str) -> tuple[str, str]:
@@ -80,14 +108,14 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
             continue
         # 日期中的年、月、日也是数字，先将其移除，避免被误当成金额。
         amount_source = line[:date.start()] + " " + line[date.end():]
-        amounts = [money(m.group(1)) for m in AMOUNT.finditer(amount_source)]
+        amounts = [money(m.group(1)) for m in CURRENCY.finditer(amount_source)]
         amounts = [x for x in amounts if x is not None]
         if not amounts:
             continue
         # 农行等明细以“交易金额、余额”连续列出，前者才是本笔金额；
         # 带符号的首个金额也优先作为交易金额。
         is_compact_abc_date = bool(re.fullmatch(r"20\d{6}", date.group(0)))
-        signed = re.search(r"(?<![\d.])([+-]\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?)(?![\d.])", amount_source)
+        signed = re.search(r"(?<![\d.])([+-]\d{1,3}(?:,\d{3})*\.\d{2})(?![\d.])", amount_source)
         amount = money(signed.group(1)) if signed else (amounts[0] if is_compact_abc_date else amounts[-1])
         if amount is None:
             continue
@@ -132,7 +160,7 @@ def analyze():
         reader = PdfReader(BytesIO(upload.read()))
         if reader.is_encrypted:
             return jsonify(error="该 PDF 已加密，请先导出无密码版本后再上传。"), 400
-        text = "\n".join(page.extract_text(extraction_mode="layout") or "" for page in reader.pages)
+        text = extract_pdf_text(reader)
     except Exception as exc:
         return jsonify(error=f"PDF 无法读取：{exc}"), 400
     if len(text.strip()) < 30:
