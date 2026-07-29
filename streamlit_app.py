@@ -78,12 +78,19 @@ if "transactions" in st.session_state:
     c.metric("经营相关出账", f"¥{stats['outgoing']:,.2f}")
     d.metric("关联不足/待核实", f"{stats['low']} 笔")
 
-    st.subheader("交易明细与判定")
+    st.subheader("相关流水")
     rows = [{
         "日期": item["date"], "交易对手/摘要": item["name"], "金额": f"{'+' if item['dir'] == '入账' else '-'}¥{item['amount']:,.2f}",
         "方向": item["dir"], "经营关联": {"高": "强相关", "中": "可能相关", "低": "关联不足"}[item["tag"]], "判定依据": item["reason"],
     } for item in transactions]
-    table = pd.DataFrame(rows)
+    related_rows = [row for row in rows if row["经营关联"] != "关联不足"]
+    related_filter = st.radio("筛选范围", ["全部相关流水", "收入相关流水", "支出相关流水"], horizontal=True)
+    if related_filter == "收入相关流水":
+        related_rows = [row for row in related_rows if row["方向"] == "入账"]
+    elif related_filter == "支出相关流水":
+        related_rows = [row for row in related_rows if row["方向"] == "出账"]
+    st.caption(f"当前显示 {len(related_rows)} 笔相关流水")
+    table = pd.DataFrame(related_rows, columns=rows[0].keys())
 
     def highlight_strong_related(row):
         if row["经营关联"] == "强相关":
@@ -91,6 +98,9 @@ if "transactions" in st.session_state:
         return [""] * len(row)
 
     st.dataframe(table.style.apply(highlight_strong_related, axis=1), use_container_width=True, hide_index=True, height=600)
+
+    with st.expander("查看全部交易明细与判定"):
+        st.dataframe(pd.DataFrame(rows).style.apply(highlight_strong_related, axis=1), use_container_width=True, hide_index=True, height=600)
 
     buffer = StringIO()
     writer = csv.DictWriter(buffer, fieldnames=rows[0].keys())
