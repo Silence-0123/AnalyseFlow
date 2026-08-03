@@ -42,6 +42,17 @@ def analyze(transactions: list[dict]) -> dict:
     return {"score": score, "high": high, "low": low, "incoming": incoming, "outgoing": outgoing}
 
 
+def summarize_counterparties(transactions: list[dict]) -> pd.DataFrame:
+    """按解析到的交易对手/摘要汇总往来频率和收支金额。"""
+    frame = pd.DataFrame(transactions)
+    frame["交易对手"] = frame["name"].fillna("未识别交易对手")
+    frame["相关收入"] = frame.apply(lambda item: item["amount"] if item["dir"] == "入账" and item["tag"] != "低" else 0, axis=1)
+    frame["相关支出"] = frame.apply(lambda item: item["amount"] if item["dir"] == "出账" and item["tag"] != "低" else 0, axis=1)
+    summary = frame.groupby("交易对手", as_index=False).agg(交易笔数=("amount", "size"), 相关收入=("相关收入", "sum"), 相关支出=("相关支出", "sum"))
+    summary["净额"] = summary["相关收入"] - summary["相关支出"]
+    return summary.sort_values(["交易笔数", "相关收入", "相关支出"], ascending=False)
+
+
 st.title("流水核验台")
 st.caption("经营关联分析 · 上传文件仅用于本次处理")
 
@@ -78,11 +89,37 @@ if "transactions" in st.session_state:
     c.metric("经营相关出账", f"¥{stats['outgoing']:,.2f}")
     d.metric("关联不足/待核实", f"{stats['low']} 笔")
 
+    st.subheader("交易对手分析")
+    counterparties = summarize_counterparties(transactions)
+    top_partner = counterparties.iloc[0]
+    c1, c2, c3 = st.columns(3)
+    c1.metric("交易对手数量", f"{len(counterparties)} 个")
+    c2.metric("交易最频繁对象", str(top_partner["交易对手"]), f"{int(top_partner['交易笔数'])} 笔")
+    c3.metric("交易最频繁对象相关净额", f"¥{top_partner['净额']:,.2f}")
+    display_counterparties = counterparties.head(20).copy()
+    for column in ["相关收入", "相关支出", "净额"]:
+        display_counterparties[column] = display_counterparties[column].map(lambda value: f"¥{value:,.2f}")
+    st.dataframe(display_counterparties, use_container_width=True, hide_index=True)
+    selected_partner = st.selectbox("查看某一交易对手的往来明细", counterparties["交易对手"].tolist())
+
+    trend = pd.DataFrame(transactions)
+    trend["月份"] = pd.to_datetime(trend["date"], errors="coerce").dt.strftime("%Y-%m")
+    trend = trend.dropna(subset=["月份"])
+    trend["相关收入"] = trend.apply(lambda item: item["amount"] if item["dir"] == "入账" and item["tag"] != "低" else 0, axis=1)
+    trend["相关支出"] = trend.apply(lambda item: item["amount"] if item["dir"] == "出账" and item["tag"] != "低" else 0, axis=1)
+    monthly_trend = trend.groupby("月份")[["相关收入", "相关支出"]].sum().sort_index()
+    if not monthly_trend.empty:
+        st.caption("按月相关流水趋势")
+        st.bar_chart(monthly_trend)
+
     st.subheader("相关流水")
     rows = [{
         "日期": item["date"], "交易对手/摘要": item["name"], "金额": f"{'+' if item['dir'] == '入账' else '-'}¥{item['amount']:,.2f}",
         "方向": item["dir"], "经营关联": {"高": "强相关", "中": "可能相关", "低": "关联不足"}[item["tag"]], "判定依据": item["reason"],
     } for item in transactions]
+    selected_partner_rows = [row for row in rows if row["交易对手/摘要"] == selected_partner]
+    with st.expander(f"查看 {selected_partner} 的交易明细"):
+        st.dataframe(pd.DataFrame(selected_partner_rows), use_container_width=True, hide_index=True)
     related_rows = [row for row in rows if row["经营关联"] != "关联不足"]
     related_filter = st.radio("筛选范围", ["全部相关流水", "收入相关流水", "支出相关流水"], horizontal=True)
     if related_filter == "收入相关流水":
