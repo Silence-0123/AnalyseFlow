@@ -91,7 +91,7 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
     # 不同银行的 PDF 可能把一笔交易拆为日期、摘要、金额等多行。既识别
     # 单行，也将每个日期到下一个日期之间的文字组合为一个候选交易块。
     # 只解析完整交易块，避免微信流水单元格换行时截断交易对手名称。
-    candidates = list(lines)
+    candidates = []
     for index, line in enumerate(lines):
         if not DATE.search(line):
             continue
@@ -102,6 +102,7 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
                 break
         candidates.append(" ".join(lines[index:end]))
     result: list[dict] = []
+    seen: set[tuple[str, float, str]] = set()
     for line in candidates:
         date = DATE.search(line)
         if not date:
@@ -130,17 +131,12 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
         # PDF 表格跨行合并时可能在单元格边界产生 “::” 或 “：：”。
         name = re.sub(r"\s*[:：]+\s*", "", name)
         name = name[:80] or "未识别交易摘要"
-        normalized = normalize_date(date.group(0))
-        duplicate = next((index for index, item in enumerate(result)
-                          if item["date"] == normalized and item["amount"] == amount
-                          and item["dir"] == direction
-                          and (item["name"] in name or name in item["name"])), None)
-        if duplicate is not None:
-            if len(name) <= len(result[duplicate]["name"]):
-                continue
-            result.pop(duplicate)
+        key = (normalize_date(date.group(0)), amount, name)
+        if key in seen:
+            continue
+        seen.add(key)
         tag, reason = classify(name, direction, industry, description)
-        result.append({"date": normalized, "name": name, "amount": amount, "dir": direction, "tag": tag, "reason": reason})
+        result.append({"date": normalize_date(date.group(0)), "name": name, "amount": amount, "dir": direction, "tag": tag, "reason": reason})
     # 保持 PDF 原始交易顺序并完整返回；个人本地版不应静默截断明细。
     return result
 
