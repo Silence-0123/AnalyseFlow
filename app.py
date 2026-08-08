@@ -90,11 +90,12 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
     lines = [" ".join(line.split()) for line in text.splitlines() if line.strip()]
     # 不同银行的 PDF 可能把一笔交易拆为日期、摘要、金额等多行。既识别
     # 单行，也将每个日期到下一个日期之间的文字组合为一个候选交易块。
-    candidates = list(lines)
+    # 只解析完整交易块，避免微信流水单元格换行时截断交易对手名称。
+    candidates = []
     for index, line in enumerate(lines):
         if not DATE.search(line):
             continue
-        end = min(index + 5, len(lines))
+        end = min(index + 8, len(lines))
         for next_index in range(index + 1, end):
             if DATE.search(lines[next_index]):
                 end = next_index
@@ -146,7 +147,7 @@ def home():
 @app.get("/<path:filename>")
 def asset(filename: str):
     """仅暴露页面需要的静态文件，避免把项目目录当作下载目录。"""
-    if filename not in {"styles.css", "app.js"}:
+    if filename not in {"styles.css", "overrides.css", "app.js"}:
         abort(404)
     return send_from_directory(ROOT, filename)
 
