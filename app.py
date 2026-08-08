@@ -128,6 +128,8 @@ def parse_transactions(text: str, industry: str, description: str) -> list[dict]
         # 农行格式的下一列为六位交易时间，移除它以获得更清晰的交易摘要。
         name = re.sub(r"^\s*\d{6}\s*", "", name)
         name = re.sub(r"[+-]?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?", "", name).strip(" -|：:")
+        # PDF 表格跨行合并时可能在单元格边界产生 “::” 或 “：：”。
+        name = re.sub(r"\s*[:：]+\s*", "", name)
         name = name[:80] or "未识别交易摘要"
         key = (normalize_date(date.group(0)), amount, name)
         if key in seen:
